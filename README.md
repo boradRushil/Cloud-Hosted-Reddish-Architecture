@@ -112,7 +112,7 @@ This project is licensed under the MIT License. Please see the `LICENSE` file fo
 ---
 
 ## Acknowledgments
-- Original application development credit to the open-source project contributors.
+- Original application development credit to the open-source project contributors.The repository for the open-source project can be found [here](https://github.com/amand33p/reddish)
 - Special thanks to the Advanced Cloud Architecting course instructors for guidance.
 
 ---
