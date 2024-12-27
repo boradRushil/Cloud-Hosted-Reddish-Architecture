@@ -1,0 +1,421 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation Template for Reddish MERN Application Architecture
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: reddish
+    Description: Name of an existing EC2 KeyPair for SSH access
+
+  BackendECRImageUri:
+    Type: String  
+    Default: 278378493675.dkr.ecr.us-east-1.amazonaws.com/reddish/backend:latest
+    Description: URI of the ECR image for the backend
+  
+  InstanceType:
+    Description: EC2 instance type for the backend
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t3.small
+  
+  AppName:
+    Type: String
+    Description: Name of the Amplify application
+    Default: ReddishFrontend
+
+  FrontendBuildUri:
+    Type: String
+    Default: s3://reddish-tes-hosting-bucket/static.zip
+    Description: Name of the S3 bucket for storing code of the application frontend build
+
+  ReddishImageBucketName:
+    Default: reddish-images-storage-bucket
+    Description: Name of the S3 bucket for storing images
+    Type: String
+
+Resources:
+  # VPC
+  ReddishVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: ReddishVPC
+
+  # Public Subnet
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ReddishVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PublicSubnet1
+
+  # Public Subnet 2
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ReddishVPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PublicSubnet2
+
+  # Private Subnet 1
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ReddishVPC
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+
+  # Private Subnet 2
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ReddishVPC
+      CidrBlock: 10.0.4.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ReddishIGW
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ReddishVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Route Table for Public Subnet
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ReddishVPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+  
+  # Route Table for Private Subnet
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ReddishVPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+
+  PrivateRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  # Elastic IP for NAT Gateway
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  # NAT Gateway
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  # Elastic Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: ReddishALB
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Type: application
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups: [!Ref PublicSecurityGroup]
+      Tags:
+        - Key: Name
+          Value: ReddishALB
+
+  # Target Group
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: target-group
+      Port: 3005
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: !Ref ReddishVPC
+      HealthCheckPort: "3005"
+      HealthCheckPath: /api/health-check
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 20
+      Matcher:
+        HttpCode: '200'
+      Tags:
+        - Key: Name
+          Value: target-group
+  
+  # Listener for Load Balancer
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # Security Group for Load Balancer
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP/HTTPS traffic to ALB
+      VpcId: !Ref ReddishVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3005
+          ToPort: 3005
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: PublicSG
+
+  # Launch Template for Backend
+  BackendLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: backend-launch-template
+      LaunchTemplateData:
+        KeyName: !Ref 'KeyName'
+        ImageId: ami-0453ec754f44f9a4a
+        InstanceType: !Ref InstanceType
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeviceIndex: 0
+            Groups:
+              - !Ref PrivateSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+              sudo yum update -y
+              sudo amazon-linux-extras enable docker
+              sudo yum install -y docker aws-cli
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo service docker start
+              
+              # Pull image
+              docker pull rborad/reddish-backend:latest
+              
+              # Docker run commands with environment variables
+              docker run -d -p 3005:3005 \
+                -e MONGODB_URI=<MongoDB URI> \
+                -e PORT=3005 \
+                -e SECRET=<JWT SECRET> \
+                -e S3_BUCKET_NAME=${ReddishImageBucketName} \
+                -e AWS_ACCESS_KEY_ID=<AWS_ACCESS_KEY> \
+                -e AWS_SECRET_ACCESS_KEY= <AWS_SECRET_ACCESS_KEY>\
+                -e AWS_SESSION_TOKEN= <AWS_SESSION_TOKEN> \
+                -e AWS_REGION= <AWS_REGION> \
+                rborad/reddish-backend:latest
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: Name
+              Value: backend-launch-template
+
+  # Security Group for EC2 Instances
+  PrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow internal communication between EC2s
+      VpcId: !Ref ReddishVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0  
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3005
+          ToPort: 3005
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0   
+      Tags:
+        - Key: Name
+          Value: PrivateSG
+
+  # Auto Scaling Group for Backend
+  BackendAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: backend-auto-scaling-group
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BackendLaunchTemplate
+        Version: !GetAtt BackendLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 4
+      DesiredCapacity: 1
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 500
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: backend-auto-scaling-group
+          PropagateAtLaunch: true
+ 
+  # Amplify App
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Ref AppName
+      CustomRules:
+        - Source: "</*>"
+          Target: "/index.html"
+          Status: "200"
+      EnvironmentVariables:
+        - Name: REACT_APP_BACKEND_URL
+          Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+
+  # Amplify Branch
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: production
+      EnableAutoBuild: false
+
+  # S3 Bucket for storing images
+  ImageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ReddishImageBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  # S3 Bucket Policy for public access
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ReddishImageBucketName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              Fn::Sub: 'arn:aws:s3:::${ReddishImageBucketName}/*'
+
+  # Vpc Endpoint for S3
+  VPCEndpointForS3:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcId: !Ref ReddishVPC
+      RouteTableIds:
+        - !Ref PublicRouteTable
+
+  # SNS Topic
+  NotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ReddishNotifications
+      Tags:
+        - Key: Name
+          Value: ReddishNotifications
+
+Outputs:
+  LoadBalancerDNSName:
+    Description: DNS name of the load balancer
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+
+  AmplifyAppId:
+    Description: The ID of the Amplify app
+    Value: !GetAtt AmplifyApp.AppId
+
+  AmplifyAppUrl:
+    Description: Amplify application URL
+    Value: !Sub "https://${AmplifyApp.DefaultDomain}"  
