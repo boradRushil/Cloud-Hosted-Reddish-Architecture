@@ -8,8 +8,7 @@ The architecture was designed following the **AWS Well-Architected Framework** t
 ---
 
 ## Architecture Diagram
-![Architecture Diagram](![Cloud-Final-Arch-diagram](https://github.com/user-attachments/assets/73569ae8-b23d-41a6-ba03-c8cfd97253fa)
-)
+![Architecture Diagram](Cloud-Final-Arch-diagram.jpg)
 
 ---
 
